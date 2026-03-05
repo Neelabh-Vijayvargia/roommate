@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase-server';
-import { sendSMS } from '@/lib/twilio';
+import { sendNotification } from '@/lib/notify';
 
 export async function POST(request: NextRequest) {
     try {
@@ -35,32 +35,32 @@ export async function POST(request: NextRequest) {
             }
         }
 
-        // Get user info for SMS
+        // Get user info for notification
         const { data: user } = await supabaseAdmin
             .from('users')
-            .select('name, phone_number')
+            .select('name, email')
             .eq('id', reportedUserId)
             .single();
 
         const userName = user?.name || 'Roommate';
-        const phoneNumber = user?.phone_number || '';
+        const email = user?.email || '';
 
-        // Send SMS
-        const message = `Hey ${userName}, someone noticed your dishes are in the sink. Time to clean up! 🍽️`;
-        const smsResult = await sendSMS(phoneNumber, message);
+        // Send notification
+        const result = await sendNotification({
+            to: email,
+            subject: '🍽️ Dishes reminder',
+            message: `Hey ${userName}, someone noticed your dishes are in the sink. Time to clean up!`,
+        });
 
-        // Log the report regardless of SMS success
+        // Log the report regardless of delivery success
         await supabaseAdmin
             .from('dish_reports')
-            .insert({
-                group_id: groupId,
-                reported_user_id: reportedUserId,
-            });
+            .insert({ group_id: groupId, reported_user_id: reportedUserId });
 
         return NextResponse.json({
             success: true,
-            smsSent: smsResult.success,
-            message: smsResult.success ? 'Notification sent!' : 'Notification recorded (SMS not configured)',
+            notified: result.success,
+            message: result.success ? 'Notification sent!' : 'Notification recorded (email not configured)',
         });
     } catch (err) {
         console.error('Dishes notify error:', err);

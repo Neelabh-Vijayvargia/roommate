@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase-server';
-import { sendSMS } from '@/lib/twilio';
+import { sendNotification } from '@/lib/notify';
 
 export async function POST(request: NextRequest) {
     try {
@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
         // Get the session with user details
         const { data: session, error: sessionError } = await supabaseAdmin
             .from('laundry_sessions')
-            .select('*, user:users(id, name, phone_number)')
+            .select('*, user:users(id, name, email)')
             .eq('id', sessionId)
             .is('checked_out_at', null)
             .single();
@@ -41,32 +41,33 @@ export async function POST(request: NextRequest) {
             }
         }
 
-        // Build SMS message
+        // Build notification
         const user = Array.isArray(session.user) ? session.user[0] : session.user;
         const userName = user?.name || 'Roommate';
-        const phoneNumber = user?.phone_number || '';
+        const email = user?.email || '';
         const checkedInAt = new Date(session.checked_in_at).getTime();
         const minutes = Math.floor((Date.now() - checkedInAt) / 60000);
 
-        let message: string;
-        if (session.machine === 'washer') {
-            message = `Hey ${userName}, your laundry has been in the washer for ${minutes} minutes. Time to move it to the dryer! 🧺`;
-        } else {
-            message = `Hey ${userName}, your laundry has been in the dryer for ${minutes} minutes. Time to take it out! 🌀`;
-        }
+        const isWasher = session.machine === 'washer';
+        const subject = isWasher
+            ? '🧺 Your laundry is ready to move'
+            : '🌀 Your laundry is ready to take out';
+        const message = isWasher
+            ? `Hey ${userName}, your laundry has been in the washer for ${minutes} minutes. Time to move it to the dryer!`
+            : `Hey ${userName}, your laundry has been in the dryer for ${minutes} minutes. Time to take it out!`;
 
-        // Send SMS
-        const smsResult = await sendSMS(phoneNumber, message);
+        // Send notification
+        const result = await sendNotification({ to: email, subject, message });
 
-        // Record notification regardless of SMS success
+        // Record notification regardless of delivery success
         await supabaseAdmin
             .from('laundry_notifications')
             .insert({ session_id: sessionId });
 
         return NextResponse.json({
             success: true,
-            smsSent: smsResult.success,
-            message: smsResult.success ? 'Notification sent!' : 'Notification recorded (SMS not configured)',
+            notified: result.success,
+            message: result.success ? 'Notification sent!' : 'Notification recorded (email not configured)',
         });
     } catch (err) {
         console.error('Notify error:', err);
